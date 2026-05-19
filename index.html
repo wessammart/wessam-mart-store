@@ -1135,24 +1135,30 @@
         const FB_BASE = `https://firestore.googleapis.com/v1/projects/wessam-8ac1d/databases/(default)/documents`;
 
         function pollDoc(path, interval, cb, delay = 0) {
+            const ck = '_cache_doc_' + path.replace(/\//g,'_');
+            // localStorage أولاً
+            try { const raw = localStorage.getItem(ck); if (raw) { cb(JSON.parse(raw)); } } catch (e) {}
             const fetchIt = async () => {
                 try {
                     const r = await fetch(`${FB_BASE}/${path}?key=${API_KEY}`);
                     if (r.status === 429) return;
                     const d = await r.json();
-                    if (!d.error) cb(d);
+                    if (!d.error) { cb(d); try { localStorage.setItem(ck, JSON.stringify(d)); } catch (e) {} }
                 } catch (e) {}
             };
             setTimeout(fetchIt, delay);
             return setInterval(fetchIt, interval);
         }
         function pollCol(collectionName, interval, cb, delay = 0) {
+            const ck = '_cache_col_' + collectionName;
+            // localStorage أولاً
+            try { const raw = localStorage.getItem(ck); if (raw) { const p = JSON.parse(raw); if (p.length) cb(p); } } catch (e) {}
             const fetchIt = async () => {
                 try {
                     const r = await fetch(`${FB_BASE}/${collectionName}?key=${API_KEY}`);
                     if (r.status === 429) return;
                     const d = await r.json();
-                    if (!d.error && d.documents) cb(d.documents);
+                    if (!d.error && d.documents) { cb(d.documents); try { localStorage.setItem(ck, JSON.stringify(d.documents)); } catch (e) {} }
                 } catch (e) {}
             };
             setTimeout(fetchIt, delay);
@@ -1348,10 +1354,20 @@
         try { onSnapshot(doc(db, 'settings', 'categories'), (snap) => { if (snap.exists()) { categoriesStatus = snap.data(); } renderHomeCategories(); }); } catch (e) { console.error('categories snapshot error:', e); }
 
         async function fetchCollection(collectionName) {
+            // 1. جرب localStorage
+            const ck = '_cache_' + collectionName;
+            try {
+                const raw = localStorage.getItem(ck);
+                if (raw) {
+                    const p = JSON.parse(raw);
+                    if (p.docs && p.docs.length) return p.docs;
+                }
+            } catch (e) {}
+            // 2. جرب REST API
             const res = await fetch(`${FB_BASE}/${collectionName}?key=${API_KEY}`);
             const data = await res.json();
             if (data.error) throw new Error(data.error.message);
-            return (data.documents || []).map(doc => {
+            const docs = (data.documents || []).map(doc => {
                 const fields = doc.fields || {};
                 const obj = { id: doc.name.split('/').pop() };
                 for (const [key, val] of Object.entries(fields)) {
@@ -1366,6 +1382,9 @@
                 }
                 return obj;
             });
+            // خزّن في localStorage
+            try { localStorage.setItem(ck, JSON.stringify({ ts: Date.now(), docs })); } catch (e) {}
+            return docs;
         }
 
         async function loadCustomCategories() {
@@ -1691,8 +1710,8 @@ try {
         }
         loadProducts();
         try {
-            onSnapshot(collection(db, 'products'), (snap) => { products = []; snap.forEach(d => products.push({ id: d.id, ...d.data() })); if (currentStoreType) renderProducts(); });
-        } catch (e) { console.error('products snapshot setup error:', e); }
+            onSnapshot(collection(db, 'products'), (snap) => { if (!snap.empty) { products = []; snap.forEach(d => products.push({ id: d.id, ...d.data() })); if (currentStoreType) renderProducts(); } });
+        } catch (e) { console.error('products snapshot error:', e); }
         searchInput.addEventListener('input', (e) => renderProducts(products.filter(p => p.name.toLowerCase().includes(e.target.value.toLowerCase()))));
 
         function renderProducts(data) { if (!data) data = products; let f = data.filter(p => p.storeType === currentStoreType); if (!f.length) return productsGrid.innerHTML = '<p class="text-gray-400 col-span-full text-center py-10">لا توجد منتجات في هذا القسم حالياً</p>'; productsGrid.innerHTML = f.map(p => { let pr = p.price; if (typeof pr === 'string' && !pr.includes('ريال')) pr += ' ريال'; let outOfStockHtml = ''; if (p.outOfStock) { outOfStockHtml = `<div class="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10 rounded-2xl"><span class="bg-red-500 text-white px-4 py-2 rounded-full font-extrabold text-sm shadow-lg mb-1">نفذت الكمية</span><span class="text-gray-300 text-xs">غير متوفر حالياً</span></div>`; } return `<div class="product-card relative overflow-hidden" onclick="openProductDetail('${p.id}')">${outOfStockHtml}<div class="product-image-wrapper"><img src="${p.image}" class="product-image" onerror="this.src='https://via.placeholder.com/300x220?text=صورة'"></div><div class="p-3 flex-1 flex flex-col justify-end"><h4 class="font-bold text-white text-sm mb-1 line-clamp-1">${p.name}</h4><p class="text-primary font-bold text-sm">${pr}</p></div></div>`; }).join(''); document.getElementById('productCount').textContent = `${f.length} منتج`; }
