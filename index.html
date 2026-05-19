@@ -1364,10 +1364,36 @@
                 }
             } catch (e) {}
             // 2. جرب REST API
-            const res = await fetch(`${FB_BASE}/${collectionName}?key=${API_KEY}`);
-            const data = await res.json();
-            if (data.error) throw new Error(data.error.message);
-            const docs = (data.documents || []).map(doc => {
+            try {
+                const res = await fetch(`${FB_BASE}/${collectionName}?key=${API_KEY}`);
+                if (res.status !== 429) {
+                    const data = await res.json();
+                    if (!data.error) {
+                        const docs = parseFirestoreDocs(data.documents || []);
+                        try { localStorage.setItem(ck, JSON.stringify({ ts: Date.now(), docs })); } catch (e) {}
+                        return docs;
+                    }
+                }
+            } catch (e) {}
+            // 3. جرب SDK (إذا REST فشل)
+            try {
+                const q = query(collection(db, collectionName));
+                const snap = await getDocs(q);
+                if (!snap.empty) {
+                    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    try { localStorage.setItem(ck, JSON.stringify({ ts: Date.now(), docs })); } catch (e) {}
+                    return docs;
+                }
+            } catch (e) {}
+            // 4. آخر حبة — جرب الكاش حتى لو قديم
+            try {
+                const raw = localStorage.getItem(ck);
+                if (raw) { const p = JSON.parse(raw); if (p.docs && p.docs.length) return p.docs; }
+            } catch (e) {}
+            return [];
+        }
+        function parseFirestoreDocs(documents) {
+            return documents.map(doc => {
                 const fields = doc.fields || {};
                 const obj = { id: doc.name.split('/').pop() };
                 for (const [key, val] of Object.entries(fields)) {
@@ -1382,9 +1408,6 @@
                 }
                 return obj;
             });
-            // خزّن في localStorage
-            try { localStorage.setItem(ck, JSON.stringify({ ts: Date.now(), docs })); } catch (e) {}
-            return docs;
         }
 
         async function loadCustomCategories() {
