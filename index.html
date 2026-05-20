@@ -1354,13 +1354,13 @@
         try { onSnapshot(doc(db, 'settings', 'categories'), (snap) => { if (snap.exists()) { categoriesStatus = snap.data(); } renderHomeCategories(); }); } catch (e) { console.error('categories snapshot error:', e); }
 
         async function fetchCollection(collectionName) {
-            // 1. جرب localStorage
             const ck = '_cache_' + collectionName;
+            // 1. جرب localStorage أولاً (للسرعة — إذا عمره أقل من 10 ثواني)
             try {
                 const raw = localStorage.getItem(ck);
                 if (raw) {
                     const p = JSON.parse(raw);
-                    if (p.docs && p.docs.length) return p.docs;
+                    if (p.docs && p.docs.length && (Date.now() - (p.ts||0)) < 10000) return p.docs;
                 }
             } catch (e) {}
             // 2. جرب REST API
