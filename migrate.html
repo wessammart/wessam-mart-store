@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html dir="rtl">
+<head><meta charset="UTF-8"><title>هجرة البيانات</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:system-ui,sans-serif; background:#0f172a; color:#fff; padding:20px; max-width:700px; margin:auto; }
+h1 { text-align:center; color:#38bdf8; margin-bottom:20px; }
+.card { background:#1e293b; padding:20px; border-radius:12px; margin-bottom:20px; }
+label { display:block; color:#94a3b8; font-size:13px; margin-bottom:4px; }
+input { width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:#fff; font-size:14px; margin-bottom:12px; }
+button { width:100%; padding:14px; border:none; border-radius:8px; font-weight:bold; font-size:16px; cursor:pointer; }
+.btn-start { background:#22c55e; color:#fff; }
+.btn-start:disabled { opacity:.5; cursor:not-allowed; }
+.log { background:#0f172a; padding:12px; border-radius:8px; font-size:12px; color:#94a3b8; height:300px; overflow-y:auto; white-space:pre-wrap; }
+.log .ok { color:#22c55e; }
+.log .err { color:#ef4444; }
+.log .info { color:#38bdf8; }
+.progress { height:6px; background:#334155; border-radius:3px; margin:12px 0; overflow:hidden; }
+.progress-bar { height:100%; background:#22c55e; width:0; transition:width .3s; }
+</style>
+</head>
+<body>
+<h1>🔄 هجرة البيانات</h1>
+<div class="card">
+  <label>المشروع القديم — Project ID</label>
+  <input id="oldPid" value="wessam-8ac1d" readonly>
+  <label>المشروع القديم — Web API Key</label>
+  <input id="oldKey" value="AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk" readonly>
+  <label>المشروع الجديد — Project ID</label>
+  <input id="newPid" value="wessam2">
+  <label>المشروع الجديد — Web API Key</label>
+  <input id="newKey" value="AIzaSyBGM-ORvTV4juxPfiA8Mb7Vb25_0EQchEY">
+  <div class="progress"><div class="progress-bar" id="bar"></div></div>
+  <button class="btn-start" id="startBtn" onclick="startMigration()">🚀 ابدأ الهجرة</button>
+</div>
+<div class="card"><div class="log" id="log">أنقر "ابدأ الهجرة" لبدء نقل البيانات...</div></div>
+
+<script>
+const LOG = document.getElementById('log');
+const BAR = document.getElementById('bar');
+const BTN = document.getElementById('startBtn');
+function log(msg, type='info') {
+    LOG.innerHTML += `<span class="${type}">${msg}</span>\n`;
+    LOG.scrollTop = LOG.scrollHeight;
+}
+function setProgress(pct) { BAR.style.width = pct + '%'; }
+
+const API_BASE = (pid, key) => `https://firestore.googleapis.com/v1/projects/${pid}/databases/(default)/documents`;
+
+async function fetchAllDocs(baseUrl, collection) {
+    let all = [];
+    let nextPageToken = null;
+    do {
+        let url = `${baseUrl}/${collection}?pageSize=300`;
+        if (nextPageToken) url += `&pageToken=${nextPageToken}`;
+        const r = await fetch(url);
+        if (r.status === 429) {
+            log(`⏳ حصة القديم مرتفعة، انتظر 10 ثواني...`, 'err');
+            await new Promise(r => setTimeout(r, 10000));
+            continue; // retry
+        }
+        const data = await r.json();
+        if (data.error) { log(`❌ ${data.error.message}`, 'err'); return all; }
+        if (data.documents) all = all.concat(data.documents);
+        nextPageToken = data.nextPageToken || null;
+    } while (nextPageToken);
+    return all;
+}
+
+async function writeDoc(baseUrl, collection, docId, fields) {
+    const url = `${baseUrl}/${collection}?documentId=${encodeURIComponent(docId)}`;
+    const r = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ fields })
+    });
+    if (!r.ok) {
+        const err = await r.json().catch(()=>({}));
+        throw new Error(err.error?.message || r.statusText);
+    }
+    return r.json();
+}
+
+function toFields(obj) {
+    const f = {};
+    for (const [k, v] of Object.entries(obj)) {
+        if (v === null || v === undefined) f[k] = { nullValue: null };
+        else if (typeof v === 'string') f[k] = { stringValue: v };
+        else if (typeof v === 'boolean') f[k] = { booleanValue: v };
+        else if (typeof v === 'number') {
+            if (Number.isInteger(v)) f[k] = { integerValue: String(v) };
+            else f[k] = { doubleValue: v };
+        } else if (v instanceof Date || (v && v.toDate)) {
+            const d = v.toDate ? v.toDate() : v;
+            f[k] = { timestampValue: d.toISOString() };
+        } else if (Array.isArray(v)) {
+            f[k] = { arrayValue: { values: v.map(item => ({ stringValue: String(item) })) } };
+        } else if (typeof v === 'object') {
+            // MapValue
+            f[k] = { mapValue: { fields: toFields(v) } };
+        } else {
+            f[k] = { stringValue: String(v) };
+        }
+    }
+    return f;
+}
+
+function extractData(doc) {
+    const fields = doc.fields || {};
+    const obj = {};
+    for (const [k, v] of Object.entries(fields)) {
+        if (v.stringValue !== undefined) obj[k] = v.stringValue;
+        else if (v.booleanValue !== undefined) obj[k] = v.booleanValue;
+        else if (v.integerValue !== undefined) obj[k] = Number(v.integerValue);
+        else if (v.doubleValue !== undefined) obj[k] = v.doubleValue;
+        else if (v.timestampValue) obj[k] = v.timestampValue;
+        else if (v.nullValue !== null && v.nullValue !== undefined) obj[k] = null;
+        else if (v.arrayValue) obj[k] = v.arrayValue.values ? v.arrayValue.values.map(x => x.stringValue) : [];
+        else if (v.mapValue) obj[k] = v.mapValue.fields;
+        else obj[k] = null;
+    }
+    return obj;
+}
+
+async function startMigration() {
+    BTN.disabled = true;
+    BTN.textContent = 'جاري الهجرة...';
+    LOG.innerHTML = '';
+    setProgress(0);
+
+    const oldPid = document.getElementById('oldPid').value.trim();
+    const oldKey = document.getElementById('oldKey').value.trim();
+    const newPid = document.getElementById('newPid').value.trim();
+    const newKey = document.getElementById('newKey').value.trim();
+
+    const oldBase = API_BASE(oldPid, oldKey);
+    const newBase = API_BASE(newPid, newKey);
+
+    // قائمة المجموعات
+    const collections = [
+        { name: 'products', label: 'المنتجات' },
+        { name: 'deliveryBoys', label: 'الموصلين' },
+        { name: 'staff', label: 'المشرفين' },
+        { name: 'orders', label: 'الطلبات' },
+        { name: 'customCategories', label: 'الأقسام المخصصة' },
+        { name: 'settings', label: 'الإعدادات' },
+        { name: 'promoCodes', label: 'أكواد الخصم' },
+        { name: 'chats', label: 'المحادثات' },
+        { name: 'reviews', label: 'التقييمات' },
+        { name: 'users', label: 'المستخدمين' },
+    ];
+
+    let total = collections.length;
+    let done = 0;
+
+    for (const col of collections) {
+        log(`📂 قراءة ${col.label}...`, 'info');
+        const docs = await fetchAllDocs(oldBase, col.name);
+        log(`   → ${docs.length} مستند`, 'info');
+
+        if (docs.length === 0) { done++; setProgress((done/total)*100); continue; }
+
+        let written = 0, failed = 0;
+        for (const doc of docs) {
+            const docId = doc.name.split('/').pop();
+            const data = extractData(doc);
+            // تحويل التواريخ
+            // نسوي write
+            try {
+                await writeDoc(newBase, col.name, docId, toFields(data));
+                written++;
+            } catch (e) {
+                failed++;
+                log(`   ⚠️ ${docId}: ${e.message}`, 'err');
+            }
+        }
+        log(`✅ ${col.label}: ${written} نجح, ${failed} فشل`, written > 0 ? 'ok' : 'err');
+
+        // ننتظر شوي عشان ما نضرب حد الكتابة
+        await new Promise(r => setTimeout(r, 1000));
+
+        done++;
+        setProgress((done/total)*100);
+    }
+
+    log(`\n🎉 ${done}/${total} مجموعات منقولة!`, 'ok');
+    BTN.textContent = '✅ تمت الهجرة';
+}
+</script>
+</body>
+</html>
