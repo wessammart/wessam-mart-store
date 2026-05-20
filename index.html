@@ -1129,10 +1129,10 @@
         import { getFirestore, collection, addDoc, onSnapshot, query, where, orderBy, doc, setDoc, getDoc, getDocs, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-        const firebaseConfig = { apiKey: "AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk", authDomain: "wessam-8ac1d.firebaseapp.com", projectId: "wessam-8ac1d", storageBucket: "wessam-8ac1d.firebasestorage.app", messagingSenderId: "140878579052", appId: "1:140878579052:web:53a52b34a176171cf6df49" };
+        const firebaseConfig = { apiKey: "AIzaSyBGM-ORvTV4juxPfiA8Mb7Vb25_0EQchEY", authDomain: "wessam2.firebaseapp.com", projectId: "wessam2", storageBucket: "wessam2.firebasestorage.app", messagingSenderId: "466094881498", appId: "1:466094881498:web:1c9cd76039537c307583e3" };
         const app = initializeApp(firebaseConfig); const db = getFirestore(app); const auth = getAuth(app);
-        const API_KEY = 'AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk';
-        const FB_BASE = `https://firestore.googleapis.com/v1/projects/wessam-8ac1d/databases/(default)/documents`;
+        const API_KEY = 'AIzaSyBGM-ORvTV4juxPfiA8Mb7Vb25_0EQchEY';
+        const FB_BASE = `https://firestore.googleapis.com/v1/projects/wessam2/databases/(default)/documents`;
 
         function pollDoc(path, interval, cb, delay = 0) {
             const ck = '_cache_doc_' + path.replace(/\//g,'_');
