@@ -22,19 +22,18 @@ button { width:100%; padding:14px; border:none; border-radius:8px; font-weight:b
 <body>
 <h1>🔄 هجرة البيانات</h1>
 <div class="card">
-  <label>المشروع القديم — Project ID</label>
-  <input id="oldPid" value="wessam-8ac1d" readonly>
-  <label>المشروع القديم — Web API Key</label>
-  <input id="oldKey" value="AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk" readonly>
-  <label>المشروع الجديد — Project ID</label>
-  <input id="newPid" value="wessam2">
+  <p style="color:#94a3b8;margin-bottom:16px;">تنقل جميع البيانات من المشروع القديم إلى الجديد عبر Firestore SDK</p>
   <label>المشروع الجديد — Web API Key</label>
   <input id="newKey" value="AIzaSyBGM-ORvTV4juxPfiA8Mb7Vb25_0EQchEY">
+  <label>المشروع الجديد — Project ID</label>
+  <input id="newPid" value="wessam2">
   <div class="progress"><div class="progress-bar" id="bar"></div></div>
   <button class="btn-start" id="startBtn" onclick="startMigration()">🚀 ابدأ الهجرة</button>
 </div>
 <div class="card"><div class="log" id="log">أنقر "ابدأ الهجرة" لبدء نقل البيانات...</div></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script>
 const LOG = document.getElementById('log');
 const BAR = document.getElementById('bar');
@@ -45,81 +44,77 @@ function log(msg, type='info') {
 }
 function setProgress(pct) { BAR.style.width = pct + '%'; }
 
-const API_BASE = (pid, key) => `https://firestore.googleapis.com/v1/projects/${pid}/databases/(default)/documents`;
+// المشروع القديم config
+const oldConfig = {
+    apiKey: "AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk",
+    authDomain: "wessam-8ac1d.firebaseapp.com",
+    projectId: "wessam-8ac1d",
+    storageBucket: "wessam-8ac1d.firebasestorage.app",
+    messagingSenderId: "140878579052",
+    appId: "1:140878579052:web:53a52b34a176171cf6df49"
+};
 
-async function fetchAllDocs(baseUrl, collection) {
-    let all = [];
-    let nextPageToken = null;
-    do {
-        let url = `${baseUrl}/${collection}?pageSize=300`;
-        if (nextPageToken) url += `&pageToken=${nextPageToken}`;
-        const r = await fetch(url);
-        if (r.status === 429) {
-            log(`⏳ حصة القديم مرتفعة، انتظر 10 ثواني...`, 'err');
-            await new Promise(r => setTimeout(r, 10000));
-            continue; // retry
+const oldApp = firebase.initializeApp(oldConfig, 'old');
+const oldDb = firebase.firestore(oldApp);
+
+const newKeyEl = document.getElementById('newKey');
+const newPidEl = document.getElementById('newPid');
+const NEW_API_BASE = () => `https://firestore.googleapis.com/v1/projects/${newPidEl.value.trim()}/databases/(default)/documents`;
+
+async function migrateCollection(name, label) {
+    log(`📂 قراءة ${label}...`);
+    let docs = [];
+    try {
+        const snap = await oldDb.collection(name).get();
+        snap.forEach(d => docs.push({ id: d.id, data: d.data() }));
+    } catch (e) {
+        log(`❌ فشل قراءة ${label}: ${e.message}`, 'err');
+        return 0;
+    }
+    log(`   → ${docs.length} مستند`, 'info');
+    if (!docs.length) return 0;
+
+    let written = 0;
+    for (const d of docs) {
+        try {
+            // write via REST API
+            const url = `${NEW_API_BASE()}/${name}?documentId=${encodeURIComponent(d.id)}&key=${newKeyEl.value.trim()}`;
+            const fields = {};
+            for (const [k, v] of Object.entries(d.data)) {
+                if (v === null || v === undefined) fields[k] = { nullValue: null };
+                else if (typeof v === 'string') fields[k] = { stringValue: v };
+                else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
+                else if (typeof v === 'number') {
+                    if (Number.isInteger(v)) fields[k] = { integerValue: String(v) };
+                    else fields[k] = { doubleValue: v };
+                } else if (typeof v === 'object' && v !== null && v.toDate) {
+                    fields[k] = { timestampValue: v.toDate().toISOString() };
+                } else if (v instanceof Date) {
+                    fields[k] = { timestampValue: v.toISOString() };
+                } else if (Array.isArray(v)) {
+                    fields[k] = { arrayValue: { values: v.map(item => ({ stringValue: String(item) })) } };
+                } else {
+                    fields[k] = { stringValue: String(v) };
+                }
+            }
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ fields })
+            });
+            if (!r.ok) {
+                const errData = await r.json().catch(()=>({}));
+                throw new Error(errData.error?.message || r.statusText);
+            }
+            written++;
+        } catch (e) {
+            log(`   ⚠️ ${d.id}: ${e.message}`, 'err');
         }
-        const data = await r.json();
-        if (data.error) { log(`❌ ${data.error.message}`, 'err'); return all; }
-        if (data.documents) all = all.concat(data.documents);
-        nextPageToken = data.nextPageToken || null;
-    } while (nextPageToken);
-    return all;
-}
-
-async function writeDoc(baseUrl, collection, docId, fields) {
-    const url = `${baseUrl}/${collection}?documentId=${encodeURIComponent(docId)}`;
-    const r = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ fields })
-    });
-    if (!r.ok) {
-        const err = await r.json().catch(()=>({}));
-        throw new Error(err.error?.message || r.statusText);
+        // تأخير بسيط عشان ما نضرب الحد
+        if (written % 50 === 0) await new Promise(r => setTimeout(r, 1000));
     }
-    return r.json();
-}
-
-function toFields(obj) {
-    const f = {};
-    for (const [k, v] of Object.entries(obj)) {
-        if (v === null || v === undefined) f[k] = { nullValue: null };
-        else if (typeof v === 'string') f[k] = { stringValue: v };
-        else if (typeof v === 'boolean') f[k] = { booleanValue: v };
-        else if (typeof v === 'number') {
-            if (Number.isInteger(v)) f[k] = { integerValue: String(v) };
-            else f[k] = { doubleValue: v };
-        } else if (v instanceof Date || (v && v.toDate)) {
-            const d = v.toDate ? v.toDate() : v;
-            f[k] = { timestampValue: d.toISOString() };
-        } else if (Array.isArray(v)) {
-            f[k] = { arrayValue: { values: v.map(item => ({ stringValue: String(item) })) } };
-        } else if (typeof v === 'object') {
-            // MapValue
-            f[k] = { mapValue: { fields: toFields(v) } };
-        } else {
-            f[k] = { stringValue: String(v) };
-        }
-    }
-    return f;
-}
-
-function extractData(doc) {
-    const fields = doc.fields || {};
-    const obj = {};
-    for (const [k, v] of Object.entries(fields)) {
-        if (v.stringValue !== undefined) obj[k] = v.stringValue;
-        else if (v.booleanValue !== undefined) obj[k] = v.booleanValue;
-        else if (v.integerValue !== undefined) obj[k] = Number(v.integerValue);
-        else if (v.doubleValue !== undefined) obj[k] = v.doubleValue;
-        else if (v.timestampValue) obj[k] = v.timestampValue;
-        else if (v.nullValue !== null && v.nullValue !== undefined) obj[k] = null;
-        else if (v.arrayValue) obj[k] = v.arrayValue.values ? v.arrayValue.values.map(x => x.stringValue) : [];
-        else if (v.mapValue) obj[k] = v.mapValue.fields;
-        else obj[k] = null;
-    }
-    return obj;
+    log(`✅ ${label}: ${written}/${docs.length}`, written > 0 ? 'ok' : 'err');
+    return written;
 }
 
 async function startMigration() {
@@ -128,62 +123,31 @@ async function startMigration() {
     LOG.innerHTML = '';
     setProgress(0);
 
-    const oldPid = document.getElementById('oldPid').value.trim();
-    const oldKey = document.getElementById('oldKey').value.trim();
-    const newPid = document.getElementById('newPid').value.trim();
-    const newKey = document.getElementById('newKey').value.trim();
-
-    const oldBase = API_BASE(oldPid, oldKey);
-    const newBase = API_BASE(newPid, newKey);
-
-    // قائمة المجموعات
     const collections = [
-        { name: 'products', label: 'المنتجات' },
-        { name: 'deliveryBoys', label: 'الموصلين' },
-        { name: 'staff', label: 'المشرفين' },
-        { name: 'orders', label: 'الطلبات' },
-        { name: 'customCategories', label: 'الأقسام المخصصة' },
-        { name: 'settings', label: 'الإعدادات' },
-        { name: 'promoCodes', label: 'أكواد الخصم' },
-        { name: 'chats', label: 'المحادثات' },
-        { name: 'reviews', label: 'التقييمات' },
-        { name: 'users', label: 'المستخدمين' },
+        ['products', 'المنتجات'],
+        ['deliveryBoys', 'الموصلين'],
+        ['staff', 'المشرفين'],
+        ['orders', 'الطلبات'],
+        ['customCategories', 'الأقسام المخصصة'],
+        ['settings', 'الإعدادات'],
+        ['promoCodes', 'أكواد الخصم'],
+        ['reviews', 'التقييمات'],
+        ['users', 'المستخدمين'],
     ];
 
     let total = collections.length;
     let done = 0;
+    let totalWritten = 0;
 
-    for (const col of collections) {
-        log(`📂 قراءة ${col.label}...`, 'info');
-        const docs = await fetchAllDocs(oldBase, col.name);
-        log(`   → ${docs.length} مستند`, 'info');
-
-        if (docs.length === 0) { done++; setProgress((done/total)*100); continue; }
-
-        let written = 0, failed = 0;
-        for (const doc of docs) {
-            const docId = doc.name.split('/').pop();
-            const data = extractData(doc);
-            // تحويل التواريخ
-            // نسوي write
-            try {
-                await writeDoc(newBase, col.name, docId, toFields(data));
-                written++;
-            } catch (e) {
-                failed++;
-                log(`   ⚠️ ${docId}: ${e.message}`, 'err');
-            }
-        }
-        log(`✅ ${col.label}: ${written} نجح, ${failed} فشل`, written > 0 ? 'ok' : 'err');
-
-        // ننتظر شوي عشان ما نضرب حد الكتابة
-        await new Promise(r => setTimeout(r, 1000));
-
+    for (const [name, label] of collections) {
+        const w = await migrateCollection(name, label);
+        totalWritten += w;
         done++;
         setProgress((done/total)*100);
     }
 
-    log(`\n🎉 ${done}/${total} مجموعات منقولة!`, 'ok');
+    log(`\n🎀 تم نقل ${totalWritten} مستند بنجاح!`, 'ok');
+    log(`\nالآن: افتح صفحة الإدارة على المشروع الجديد وأضف بياناتك.`, 'info');
     BTN.textContent = '✅ تمت الهجرة';
 }
 </script>
