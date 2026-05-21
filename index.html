@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 
 <head>
@@ -770,13 +770,14 @@
   </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   <script>
     window.addEventListener('load', function () {
       const firebaseConfig = { apiKey: "AIzaSyA2N_lsZ7yyvT1kIydXFkW_fLVFH0kQRBk", authDomain: "wessam-8ac1d.firebaseapp.com", projectId: "wessam-8ac1d", storageBucket: "wessam-8ac1d.firebasestorage.app", messagingSenderId: "140878579052", appId: "1:140878579052:web:53a52b34a176171cf6df49" };
       firebase.initializeApp(firebaseConfig);
-      const db = firebase.firestore(), auth = firebase.auth();
+      const db = firebase.firestore();
+        db.settings({ experimentalForceLongPolling: true, merge: true });
+        const auth = firebase.auth();
       const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
       let isSettingsUnlocked = false, currentOrderFilter = 'all', currentProductFilter = 'all', currentUserRole = null, currentUserStoreId = null, currentDeliveryBoyId = null, cachedProducts = [], allOrdersData = [], allDeliveryBoys = [];
       const storeLabels = { market: 'البقالات', restaurant: 'المطاعم', coffee: 'كوفي', coffeeMudhal: 'كوفي مدهال', veggies: 'خضار وفواكه', homemade: 'إسر منتجات' };
@@ -1179,3 +1180,4 @@
 </body>
 
 </html>
+
